@@ -1,107 +1,108 @@
 # QueueForge
 
-QueueForge is a small distributed job processing system. An API accepts and schedules jobs, PostgreSQL stores their state, Redis coordinates delivery, and separate Java worker processes execute built-in handlers. The dashboard lets you follow jobs from submission through completion or failure.
+QueueForge is a backend job processing system built using Java and Spring Boot. It allows users to submit jobs, schedule their execution, manage dependencies, and track their status.
+
+Jobs are stored in PostgreSQL, while Redis is used to manage job delivery between the API and worker processes. Separate Java workers pick up jobs and execute them in the background.
+
+The project also includes a React dashboard where users can submit jobs and monitor their progress, retries, and execution results.
 
 ## Dashboard
 
-![QueueForge dashboard](preview.png)
+![QueueForge Dashboard](preview.png)
 
 ## Architecture
 
+QueueForge has three main parts:
+
+- **Frontend:** Provides the dashboard for submitting and monitoring jobs.
+- **Backend API:** Handles authentication, job creation, scheduling, and job management.
+- **Worker:** Picks up available jobs and executes them in the background.
+
+### Application flow
+
 ```mermaid
 flowchart LR
-    Browser[React dashboard] -->|REST + JWT| API[Spring Boot API]
-    API -->|jobs, dependencies, events| PG[(PostgreSQL)]
-    API -->|dispatch job IDs| Redis[(Redis ready list)]
-    Worker[Worker processes] -->|claim and acknowledge| Redis
-    Worker -->|claim, execute state, events| PG
+    Browser[React Dashboard] -->|REST API + JWT| API[Spring Boot API]
+    API -->|Store jobs and events| DB[(PostgreSQL)]
+    API -->|Dispatch job IDs| Redis[(Redis)]
+    Redis --> Worker[Java Worker]
+    Worker -->|Update job status| DB
+    Worker -->|Acknowledge jobs| Redis
 ```
 
-PostgreSQL is the source of truth for job state and execution history. Redis is a delivery and coordination layer. Flyway creates the schema, including indexed `job_events` rows, and Hibernate validates the mapped schema at startup.
+PostgreSQL stores the main job information and execution history. Redis helps coordinate job delivery between the API and workers.
 
-### Job lifecycle
+## How QueueForge Works
 
-1. The dashboard sends a validated job request with a JWT. The API stores the job and its prerequisite links in PostgreSQL.
-2. The scheduler checks due times and prerequisite states. Failed or cancelled prerequisites fail the dependent job. Ready job IDs are pushed to Redis in priority order.
-3. A worker moves an ID from Redis's ready list to its processing list, then locks the PostgreSQL row. Only a `QUEUED` row can be claimed; the attempt count and running state are committed before execution begins.
-4. The worker writes a result or error and an execution event. Failed attempts wait for the configured fixed delay and are dispatched again until the attempt limit is reached.
-5. A recovery pass retries jobs whose two-minute worker lease expired and clears orphaned or no-longer-active entries from Redis's processing list. The scheduler also republishes queued jobs whose dispatch marker is older than one minute.
+The basic job processing flow is:
 
-Redis messages can be delivered more than once. The row lock and state check prevent duplicate messages from claiming a job that is already running or finished. Queue delivery is **at least once**, not exactly once: a worker can stop after performing an external side effect but before saving its result, and recovery may run that work again. Attempt numbers fence stale workers from overwriting a later attempt, but they cannot undo side effects. Handlers that call external systems should use idempotency keys. The four included demo handlers have no external side effects.
+1. A user logs in and receives a JWT token.
+2. The user submits a job through the dashboard.
+3. The API validates the request and saves the job in PostgreSQL.
+4. The scheduler checks which jobs are ready to execute.
+5. Ready job IDs are added to Redis.
+6. A worker picks up a job and processes it.
+7. After execution, the worker updates the job status and saves the result.
+8. If a job fails, it can be retried according to its configured retry settings.
 
-The PostgreSQL update and Redis publish are not one distributed transaction. The dispatch marker and periodic recovery allow a queued job to be published again if the services fail between those operations; this favors eventual delivery and can create harmless duplicate Redis messages.
+QueueForge also supports job dependencies. A job can wait for another job to finish before it becomes eligible for execution.
 
-## Technology
+### Job retries and recovery
 
-- **Java 21 and Spring Boot** provide the REST API, validation, authentication, scheduling, and worker processes.
-- **PostgreSQL** stores accounts, jobs, dependency edges, and execution events.
-- **Redis** coordinates the ready and processing lists and stores worker heartbeats.
-- **React, Vite, and Lucide** provide the responsive dashboard.
-- **Docker Compose** runs the API, web app, database, Redis, and a separately scalable worker service.
-- **C++20** has a small REST submission example in [examples/cpp-client](examples/cpp-client/README.md).
+Jobs can be configured with a maximum number of attempts and a retry delay.
 
-## Run locally
+If a worker stops unexpectedly while processing a job, the recovery mechanism checks for expired worker leases and allows eligible jobs to be processed again.
 
-Requirements: Docker Desktop with Compose, plus Node.js 20.19+ and Java 21 if you want to run the frontend or backend outside Docker.
+Redis may deliver the same job more than once. PostgreSQL row locking and job status checks help prevent multiple workers from claiming the same active job.
 
-From the project directory:
+QueueForge uses **at-least-once delivery**, not exactly-once execution. If a worker performs an external operation but stops before saving its result, that operation could happen again during recovery. The included demo handlers do not perform external side effects.
 
-```powershell
-Copy-Item .env.example .env
-# Replace POSTGRES_PASSWORD and JWT_SECRET in .env with local values.
-docker compose up --build
-```
+The API and Redis do not share a distributed transaction. Periodic recovery helps dispatch jobs again if a failure happens between saving a job and publishing it to Redis.
 
-Open [http://localhost:5173](http://localhost:5173). The API is at [http://localhost:8080](http://localhost:8080), and its health endpoint is [http://localhost:8080/actuator/health](http://localhost:8080/actuator/health).
+## Technologies Used
 
-The checked-in environment file contains placeholders, not production secrets. Compose requires both passwords to be set. PostgreSQL and Redis are only reachable on the Compose network; the web app and API ports are published for local use. To inspect PostgreSQL, use `docker compose exec postgres psql -U queueforge -d queueforge`.
+- **Languages:** Java, C++, JavaScript, SQL
+- **Backend:** Spring Boot, Spring Security, Spring Data JPA, Hibernate, REST APIs, JWT Authentication
+- **Frontend:** React, HTML5, CSS3
+- **Database and Caching:** PostgreSQL, Redis
+- **Tools:** Git, GitHub, Maven, Docker, Docker Compose
 
-Demo data is enabled in the copied local `.env` file. The local demo account is `demo@queueforge.dev` with password `QueueForge!2026`. Use it only for a local demo. Set `APP_DEMO_SEED=false` for other environments. The seeder creates its account and sample jobs only when that account does not already exist.
+## Main Features
 
-To stop the services and keep their data, run `docker compose down`. To remove local database and Redis data too, run `docker compose down -v`.
+- User registration and login with JWT authentication.
+- Submit and schedule background jobs.
+- Track job status and execution history.
+- Redis-based job delivery and coordination.
+- Multiple worker processes for job execution.
+- Job priority and dependency management.
+- Configurable retry attempts and retry delays.
+- Recovery of jobs after worker interruptions.
+- Dashboard showing job statistics and worker activity.
+- Support for different built-in job types.
+- C++ REST API example for submitting jobs.
 
-### Environment variables
+## Built-in Job Types
 
-| Variable | Purpose |
-| --- | --- |
-| `POSTGRES_DB` | Database name; defaults to `queueforge`. |
-| `POSTGRES_USER` | Database user; defaults to `queueforge`. |
-| `POSTGRES_PASSWORD` | Required database password. |
-| `JWT_SECRET` | Required signing key of at least 32 bytes. |
-| `APP_DEMO_SEED` | Seed the local demo account and jobs; `false` by default in Compose. |
-| `APP_WORKER_CONCURRENCY` | Worker threads per worker process; defaults to `4`. |
-| `APP_CORS_ALLOWED_ORIGINS` | Comma-separated browser origins; defaults to the local web and API origins. |
+QueueForge currently includes four built-in job types.
 
-### Scale worker processes
-
-The default worker service uses four threads per process. Start three worker containers with twelve total threads using:
-
-```powershell
-docker compose up --build -d --scale worker=3
-```
-
-The dashboard shows process IDs from worker heartbeats, configured slots, current running jobs, and Redis ready/processing depth. It does not claim per-thread CPU or memory measurements.
-
-## Built-in job types
+| Job Type | Description |
+|---|---|
+| ECHO | Returns the submitted payload. |
+| TRANSFORM | Converts text to uppercase and returns its length and processing time. |
+| DELAY | Waits for a specified duration before completing. |
+| SIMULATE_FAILURE | Simulates failed attempts before succeeding. |
 
 Job payloads must be JSON objects.
 
-| Type | Example payload | Behavior |
-| --- | --- | --- |
-| `ECHO` | `{"message":"hello","source":"api"}` | Returns the payload as the result. |
-| `TRANSFORM` | `{"text":"queueforge"}` | Returns the original text, uppercase text, character count, and processing time. |
-| `DELAY` | `{"milliseconds":1500}` | Waits for up to 30 seconds and reports the elapsed duration. |
-| `SIMULATE_FAILURE` | `{"failUntilAttempt":2}` | Fails the first two attempts, then succeeds. |
-
-`maxAttempts` must be 1–10, `retryDelaySeconds` 1–3600, and `priority` 1–10. Higher priorities dispatch first among the currently due jobs. `runAt` accepts an ISO-8601 instant. `dependsOn` accepts UUIDs of existing jobs owned by the same account; a new job can only depend on earlier jobs, so the API cannot create a dependency cycle.
-
-Example request:
+Example job request:
 
 ```json
 {
   "name": "Normalize customer data",
   "type": "TRANSFORM",
-  "payload": { "text": "acme supply order 4821" },
+  "payload": {
+    "text": "acme supply order 4821"
+  },
   "maxAttempts": 4,
   "retryDelaySeconds": 10,
   "priority": 7,
@@ -109,50 +110,169 @@ Example request:
 }
 ```
 
-## API
+## Running the Project Locally
 
-Register or sign in to receive a JWT:
+### Requirements
+
+- Java 21
+- Maven
+- Docker Desktop
+- Docker Compose
+
+### 1. Clone the repository
 
 ```bash
-curl -X POST http://localhost:8080/api/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"demo@queueforge.dev","password":"QueueForge!2026"}'
+git clone https://github.com/ashuuakk06/QueueForge.git
 ```
 
-Send the returned token as `Authorization: Bearer <token>` to the protected routes:
+Move into the project directory:
 
-| Method | Path | Description |
-| --- | --- | --- |
-| `GET` | `/api/auth/me` | Current account. |
-| `GET` | `/api/dashboard` | Job counts, recent jobs, activity, Redis depth, and worker heartbeats. |
-| `GET` | `/api/jobs?status=FAILED&search=import` | Latest 500 jobs for the account; optional status and text filters. |
-| `POST` | `/api/jobs` | Create a job. |
-| `GET` | `/api/jobs/{id}` | Read an owned job. |
-| `GET` | `/api/jobs/{id}/events` | Read up to 50 newest events for an owned job. |
-| `POST` | `/api/jobs/{id}/retry` | Retry a failed or cancelled job. |
-| `POST` | `/api/jobs/{id}/cancel` | Cancel a job that has not started. |
+```bash
+cd QueueForge
+```
 
-The JavaScript dashboard sends these requests through the Nginx `/api/` proxy. The C++ example uses the same authenticated REST API.
+### 2. Configure environment variables
 
-## Tests and production build
-
-Run backend tests from `backend` and the frontend production build from `frontend`:
+Copy the example environment file:
 
 ```powershell
+Copy-Item .env.example .env
+```
+
+Open `.env` and configure the required values:
+
+- POSTGRES_PASSWORD
+- JWT_SECRET
+
+Use local development values and do not commit your actual `.env` file.
+
+### 3. Start the application
+
+Run:
+
+```bash
+docker compose up --build
+```
+
+Docker Compose starts the backend, frontend, PostgreSQL, Redis, and worker services.
+
+### 4. Open the application
+
+- **Frontend:** http://localhost:5173
+- **Backend API:** http://localhost:8080
+- **Health Check:** http://localhost:8080/actuator/health
+
+### Demo account
+
+If demo data is enabled in your local environment, you can use:
+
+- **Email:** demo@queueforge.dev
+- **Password:** QueueForge!2026
+
+These credentials are intended only for local demonstration.
+
+### Stop the application
+
+To stop the containers:
+
+```bash
+docker compose down
+```
+
+To stop the containers and remove local database and Redis data:
+
+```bash
+docker compose down -v
+```
+
+## Scaling Workers
+
+QueueForge supports running multiple worker containers.
+
+The default worker configuration uses four threads per process.
+
+To start three worker containers:
+
+```bash
+docker compose up --build -d --scale worker=3
+```
+
+This runs three worker processes with four threads configured per process.
+
+The dashboard displays worker heartbeats, running jobs, and Redis queue information.
+
+## API Endpoints
+
+The backend provides REST APIs for authentication and job management.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/auth/me` | Get current account details. |
+| GET | `/api/dashboard` | Get dashboard statistics. |
+| GET | `/api/jobs` | Get jobs for the logged-in account. |
+| POST | `/api/jobs` | Create a new job. |
+| GET | `/api/jobs/{id}` | Get job details. |
+| GET | `/api/jobs/{id}/events` | Get job execution events. |
+| POST | `/api/jobs/{id}/retry` | Retry a failed or cancelled job. |
+| POST | `/api/jobs/{id}/cancel` | Cancel a job that has not started. |
+
+Protected endpoints require a JWT token in the Authorization header.
+
+```http
+Authorization: Bearer <token>
+```
+
+The dashboard communicates with the backend through the `/api/` route.
+
+A small C++20 example client is also included in:
+
+`examples/cpp-client`
+
+## Running Tests
+
+To run the backend tests, open the backend directory:
+
+```bash
+cd backend
 mvn test
 ```
 
-```powershell
-npm ci
+To build the frontend, open the frontend directory:
+
+```bash
+cd frontend
+npm install
 npm run build
 ```
 
-The backend tests cover execution results, retry and exhaustion transitions, duplicate and concurrent claims, stale worker fencing and recovery, failed dependencies, PostgreSQL-style event persistence, and account-level event access. Docker Compose builds the backend image without running the test suite; run `mvn test` separately when validating a change.
+The backend tests cover job execution, retry handling, concurrent job claims, worker recovery, dependency failures, and execution event access.
 
-## Known limits
+## Current Limitations
 
-- The API returns at most the latest 500 jobs, and the event endpoint returns the latest 50 events. Server-side pagination is not implemented.
-- Retry delay is fixed per job rather than exponential. Worker recovery uses a fixed two-minute lease and runs every 30 seconds.
-- The dashboard reports process heartbeats and aggregate queue counts, not per-thread utilization or host resource metrics.
-- The included handlers demonstrate processing behavior; QueueForge does not execute arbitrary user code or provide a production plugin system.
-- Redis AOF is enabled for the local Compose service. PostgreSQL remains the authoritative store, and Redis/PostgreSQL failures can cause delayed retries and duplicate deliveries as described above.
+- The API currently returns a maximum of 500 jobs.
+- The execution event endpoint returns the latest 50 events.
+- Retry delays are fixed rather than exponential.
+- Worker recovery uses a fixed lease duration.
+- The dashboard shows worker status and queue information but does not provide detailed CPU or memory monitoring.
+- The system supports built-in job handlers rather than arbitrary user-defined code.
+- Job delivery is at least once, so handlers involving external operations should use idempotency keys.
+
+## Future Improvements
+
+Some improvements that could be added in future versions:
+
+- Server-side pagination for job history.
+- More job types and configurable handlers.
+- Better worker monitoring.
+- Additional testing for failure and recovery scenarios.
+- Improved job scheduling and retry options.
+
+## Author
+
+**Ashish Pagariya**
+
+GitHub: https://github.com/ashuuakk06
+
+---
+
+QueueForge is a project built to understand how background job processing, queues, worker execution, and failure recovery work together in a Spring Boot application.

@@ -6,10 +6,6 @@ Jobs are stored in PostgreSQL, while Redis is used to manage job delivery betwee
 
 The project also includes a React dashboard where users can submit jobs and monitor their progress, retries, and execution results.
 
-## Dashboard
-
-![QueueForge Dashboard](preview.png)
-
 ## Architecture
 
 QueueForge has three main parts:
@@ -62,7 +58,7 @@ The API and Redis do not share a distributed transaction. Periodic recovery help
 ## Technologies Used
 
 - **Languages:** Java, C++, JavaScript, SQL
-- **Backend:** Spring Boot, Spring Security, Spring Data JPA, Hibernate, REST APIs, JWT Authentication
+- **Backend:** Spring Boot, Spring Security, JPA/Hibernate, REST APIs, JWT Authentication
 - **Frontend:** React, HTML5, CSS3
 - **Database and Caching:** PostgreSQL, Redis
 - **Tools:** Git, GitHub, Maven, Docker, Docker Compose
@@ -92,75 +88,6 @@ QueueForge currently includes four built-in job types.
 | DELAY | Waits for a specified duration before completing. |
 | SIMULATE_FAILURE | Simulates failed attempts before succeeding. |
 
-Job payloads must be JSON objects.
-
-Example job request:
-
-```json
-{
-  "name": "Normalize customer data",
-  "type": "TRANSFORM",
-  "payload": {
-    "text": "acme supply order 4821"
-  },
-  "maxAttempts": 4,
-  "retryDelaySeconds": 10,
-  "priority": 7,
-  "dependsOn": []
-}
-```
-
-## Running the Project Locally
-
-### Requirements
-
-- Java 21
-- Maven
-- Docker Desktop
-- Docker Compose
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/ashuuakk06/QueueForge.git
-```
-
-Move into the project directory:
-
-```bash
-cd QueueForge
-```
-
-### 2. Configure environment variables
-
-Copy the example environment file:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Open `.env` and configure the required values:
-
-- POSTGRES_PASSWORD
-- JWT_SECRET
-
-Use local development values and do not commit your actual `.env` file.
-
-### 3. Start the application
-
-Run:
-
-```bash
-docker compose up --build
-```
-
-Docker Compose starts the backend, frontend, PostgreSQL, Redis, and worker services.
-
-### 4. Open the application
-
-- **Frontend:** http://localhost:5173
-- **Backend API:** http://localhost:8080
-- **Health Check:** http://localhost:8080/actuator/health
 
 ### Demo account
 
@@ -170,80 +97,6 @@ If demo data is enabled in your local environment, you can use:
 - **Password:** QueueForge!2026
 
 These credentials are intended only for local demonstration.
-
-### Stop the application
-
-To stop the containers:
-
-```bash
-docker compose down
-```
-
-To stop the containers and remove local database and Redis data:
-
-```bash
-docker compose down -v
-```
-
-## Scaling Workers
-
-QueueForge supports running multiple worker containers.
-
-The default worker configuration uses four threads per process.
-
-To start three worker containers:
-
-```bash
-docker compose up --build -d --scale worker=3
-```
-
-This runs three worker processes with four threads configured per process.
-
-The dashboard displays worker heartbeats, running jobs, and Redis queue information.
-
-## API Endpoints
-
-The backend provides REST APIs for authentication and job management.
-
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/api/auth/me` | Get current account details. |
-| GET | `/api/dashboard` | Get dashboard statistics. |
-| GET | `/api/jobs` | Get jobs for the logged-in account. |
-| POST | `/api/jobs` | Create a new job. |
-| GET | `/api/jobs/{id}` | Get job details. |
-| GET | `/api/jobs/{id}/events` | Get job execution events. |
-| POST | `/api/jobs/{id}/retry` | Retry a failed or cancelled job. |
-| POST | `/api/jobs/{id}/cancel` | Cancel a job that has not started. |
-
-Protected endpoints require a JWT token in the Authorization header.
-
-```http
-Authorization: Bearer <token>
-```
-
-The dashboard communicates with the backend through the `/api/` route.
-
-A small C++20 example client is also included in:
-
-`examples/cpp-client`
-
-## Running Tests
-
-To run the backend tests, open the backend directory:
-
-```bash
-cd backend
-mvn test
-```
-
-To build the frontend, open the frontend directory:
-
-```bash
-cd frontend
-npm install
-npm run build
-```
 
 The backend tests cover job execution, retry handling, concurrent job claims, worker recovery, dependency failures, and execution event access.
 
